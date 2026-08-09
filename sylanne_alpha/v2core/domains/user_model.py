@@ -134,7 +134,8 @@ class UserModelDomain:
     __slots__ = (
         "_disposition", "_disp_precision", "_rhythm_ema", "_last_user_ts",
         "_style_sketch", "_last_prediction", "_pe_history", "_sync_trace",
-        "_meme_cands", "_memes", "_hesitation_ema", "_bond_ema", "_last_user_text",
+        "_meme_cands", "_memes", "_hesitation_ema", "_bond_ema",
+        "_relationship_signal_weight", "_last_user_text",
     )
 
     def __init__(self) -> None:
@@ -152,6 +153,7 @@ class UserModelDomain:
         self._memes: dict[str, dict[str, float]] = {}
         self._hesitation_ema: float = 0.0
         self._bond_ema: float = 0.0
+        self._relationship_signal_weight: float = 0.0
         # T2-01①：上一条真实用户文本（不含空闲/主动轮），供 IgnitionArbiter 做零状态
         # 的"复读检测"（本轮文本与上轮文本相同 → 低信息量）。只在 EVOLVE 写，DELIBERATE
         # 读到的永远是"上一轮"的值（与 _last_user_ts 同一时序纪律，见 reply_overdue）。
@@ -245,7 +247,7 @@ class UserModelDomain:
     _GRIP_WORDS = ("素未谋面", "刚认识Ta", "还在认识Ta", "渐渐懂Ta",
                    "比较懂Ta", "很懂Ta", "对Ta了如指掌")
     _SYNC_WORDS = ("完全接不上Ta的频率", "频率对不上", "时常错频", "略有错频",
-                   "大致合拍", "很合拍", "心有灵犀")
+                   "大致合拍", "很合拍", "当前非常合拍")
 
     def prompt_line(self) -> str:
         """心象片段"对你"行（纯模板，零-LLM，零数字）。
@@ -468,18 +470,16 @@ class UserModelDomain:
         return "会先想一想"
 
     def bond_hint(self) -> str:
-        """关系感行：根据共同经历与梗的活跃度，给出“我们正在形成”的提示。"""
-        score = self._bond_ema
-        if self._sync_trace:
-            score = max(score, float(self._sync_trace[-1].get("sync", 0.0)) - 0.3)
-        score = max(score, 0.05 * len(self._memes))
-        if score <= 0.12:
+        """关系感行：只认显式关系事件与已晋升共享梗，不把合拍误作熟悉。"""
+        meme_evidence = min(0.4, 0.05 * len(self._memes))
+        if self._relationship_signal_weight < 0.25 and len(self._memes) < 3:
             return ""
+        score = max(self._bond_ema, self._relationship_signal_weight, meme_evidence)
         if score > 0.45:
-            return "像是已经认识很久"
+            return "彼此已经熟悉起来"
         if score > 0.25:
             return "我们之间有点默契"
-        return "开始有我们了"
+        return "开始熟悉起来"
 
     def _update_style(self, sig: TextSignals) -> None:
         obs = {"len": float(sig.length), "punct": sig.punct, "warmth": sig.warm}
@@ -558,16 +558,13 @@ class UserModelDomain:
         base += min(0.25, max(0.0, user_pe) * 0.18)
         self._hesitation_ema = 0.85 * self._hesitation_ema + 0.15 * base
 
-        bond = 0.0
-        mm = self.memes()
-        bond += min(0.2, 0.05 * len(mm))
-        if self._sync_trace:
-            recent = self._sync_trace[-1]["sync"]
-            bond += max(0.0, recent - 0.5) * 0.3
-        if self._pe_history:
-            bond += max(0.0, 0.3 - (sum(self._pe_history) / len(self._pe_history))) * 0.25
-        bond += 0.08 if len(text) > 0 else 0.0
-        self._bond_ema = 0.9 * self._bond_ema + 0.1 * bond
+        relationship_weight = max(
+            0.0, min(1.0, float(getattr(body, "relationship_signal_weight", 0.0) or 0.0))
+        )
+        self._relationship_signal_weight = relationship_weight
+        meme_evidence = min(0.4, 0.05 * len(self._memes))
+        evidence = max(relationship_weight, meme_evidence)
+        self._bond_ema = 0.9 * self._bond_ema + 0.1 * evidence
 
     # ---- 持久化（字段名与旧档完全兼容，容缺，铁律④）----
 
@@ -583,6 +580,7 @@ class UserModelDomain:
             "sync_trace": list(self._sync_trace),
             "hesitation_ema": self._hesitation_ema,
             "bond_ema": self._bond_ema,
+            "relationship_signal_weight": self._relationship_signal_weight,
             "meme_cands": {g: dict(c) for g, c in self._meme_cands.items()},
             "memes": {g: dict(m) for g, m in self._memes.items()},
             "last_user_text": self._last_user_text,
@@ -627,6 +625,9 @@ class UserModelDomain:
         bond = _opt_f(data.get("bond_ema"))
         if bond is not None:
             self._bond_ema = bond
+        relationship_weight = _opt_f(data.get("relationship_signal_weight"))
+        if relationship_weight is not None:
+            self._relationship_signal_weight = max(0.0, min(1.0, relationship_weight))
         if isinstance(data.get("style_sketch"), dict):
             self._style_sketch = {
                 str(k): v for k, v in (

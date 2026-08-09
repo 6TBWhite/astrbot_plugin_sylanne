@@ -56,6 +56,7 @@ class BodySnapshot:
     repair_pressure: float = 0.0  # 修复压力 [0,1]
     # —— 关系（来自 relational_sheaf / 人格）——
     intimacy_gravity: float = 0.5  # 关系引力/亲密度 [0,1]
+    relationship_signal_weight: float = 0.0  # 显式关系事件权重 [0,1]
     # —— 人格向量（Big Five / Embodiment Five），只读 ——
     personality: dict[str, float] = field(default_factory=dict)
     # ═══ 2.1.0 认知科学根基扩展（Phase A 地基；详见 docs/sylanne-2.1.0-cognitive-architecture.md）═══

@@ -140,6 +140,9 @@ def snapshot_from_surface(
         tension=max(0.0, min(1.0, tension)),
         repair_pressure=max(0.0, min(1.0, repair_pressure)),
         intimacy_gravity=max(0.0, min(1.0, float(intimacy))),
+        relationship_signal_weight=max(
+            0.0, min(1.0, _f(state_index, "relationship_signal_weight"))
+        ),
         personality=clean_traits,
         # canonical PE（extras 注入；缺省中性，不 clamp 上限——铁律2，只容错降级）
         surprise=_ext_f(ext, "surprise", 0.0),

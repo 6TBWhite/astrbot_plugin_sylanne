@@ -1133,7 +1133,7 @@ class LLMRequestPipeline:
                         session_key,
                         text=message_text[:200],
                         confidence=0.3,
-                        flags=["safe", "group_silent"],
+                        flags=["group_silent"],
                         now=time.time(),
                     )
                 except Exception as e:
@@ -2357,7 +2357,7 @@ class LLMRequestPipeline:
             # 将评估结果注入计算栈
             now = time.time()
             pre_assessment = assessment or None
-            event_flags = ["safe"]
+            event_flags: list[str] = []
             event_confidence = 0.7
             event_values: dict = {}
             # v2core 阶段一暂存的评价（对【这条消息】的多维评价）：合并进本轮 request
@@ -2534,7 +2534,7 @@ class LLMRequestPipeline:
                     session_key,
                     text=text,
                     confidence=0.7,
-                    flags=["safe"],
+                    flags=[],
                     now=time.time(),
                 )
             except Exception as e2:

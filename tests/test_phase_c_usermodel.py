@@ -107,6 +107,49 @@ def test_mentalize_low_sync_seeks_clarify() -> None:
     assert out is not None and out.payload.get("want") == "clarify_you"
 
 
+def test_high_synchrony_without_relationship_evidence_has_no_bond_language() -> None:
+    dom = UserModelDomain()
+    dom.load_dict(
+        {
+            "pe_history": [0.0] * 8,
+            "sync_trace": [
+                {"turn": float(i), "sync": 0.75 + i * 0.02, "grip": 0.8, "user_pe": 0.0}
+                for i in range(6)
+            ],
+        }
+    )
+
+    line = dom.prompt_line()
+    assert dom.synchrony() == 1.0
+    assert "合拍" in line
+    for forbidden in ("我们", "默契", "认识很久", "心有灵犀"):
+        assert forbidden not in line
+
+
+def test_explicit_relationship_evidence_unlocks_gradual_bond_language() -> None:
+    dom = UserModelDomain()
+    dom.ingest(
+        _evolve_ctx(
+            _body(relationship_signal_weight=0.25),
+            "普通消息",
+            now=1.0,
+            dom=dom,
+        )
+    )
+    assert dom.bond_hint() == "开始熟悉起来"
+
+    dom.ingest(
+        _evolve_ctx(
+            _body(relationship_signal_weight=0.30),
+            "另一条普通消息",
+            now=2.0,
+            dom=dom,
+        )
+    )
+    assert dom.bond_hint() == "我们之间有点默契"
+    assert "认识很久" not in dom.prompt_line()
+
+
 @pytest.mark.asyncio
 async def test_full_turn_phase_b_c_wired() -> None:
     """整轮：Mentalize+Appraisal(PERCEPT) → Recall+Expression+Ignition(DELIBERATE) →

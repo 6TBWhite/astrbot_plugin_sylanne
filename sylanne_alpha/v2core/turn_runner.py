@@ -204,7 +204,7 @@ class TurnRunner:
             return
         if reply.kind is ReplyKind.SPEAK:
             text = "\n".join(reply.parts)
-            flags = ["response", "safe"]
+            flags = ["response"]
         elif reply.kind is ReplyKind.SILENT:
             text = ""
             flags = ["response", "silent"]

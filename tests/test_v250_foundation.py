@@ -637,6 +637,50 @@ def test_person_profile_from_dict_missing_fields_uses_defaults():
     assert profile == PersonProfile()
 
 
+def test_person_profile_v1_migration_resets_only_warmth_transient_state():
+    legacy = {
+        "schema_ver": 1,
+        "preference_count": 3,
+        "boundary_count": 2,
+        "progress_count": 4,
+        "repair_count": 1,
+        "phase": "active_continuity",
+        "six_snapshot": {"edge": 0.7, "curiosity": 0.8},
+        "warmth_baseline": 0.9,
+        "warmth_transient": 0.25,
+        "volatility_transient": 0.12,
+        "valence": -0.3,
+        "arousal": 0.6,
+        "tension": 0.4,
+        "last_interaction_ts": 1234.0,
+        "last_applied_transient": 0.15,
+        "last_applied_volatility_transient": 0.08,
+    }
+
+    migrated = PersonProfile.from_dict(legacy)
+    assert migrated.schema_ver == 2
+    assert migrated.warmth_baseline == 0.45
+    assert migrated.warmth_transient == 0.0
+    assert migrated.last_applied_transient == 0.0
+    assert migrated.volatility_transient == 0.12
+    assert migrated.last_applied_volatility_transient == 0.08
+    assert migrated.valence == -0.3
+    assert migrated.arousal == 0.6
+    assert migrated.tension == 0.4
+    assert migrated.last_interaction_ts == 1234.0
+    assert migrated.preference_count == 3
+    assert migrated.boundary_count == 2
+    assert migrated.progress_count == 4
+    assert migrated.repair_count == 1
+    assert migrated.phase == "active_continuity"
+    assert migrated.six_snapshot == {"edge": 0.7, "curiosity": 0.8}
+
+    # 已写成 v2 后重复加载不再重置新的即时值。
+    migrated.warmth_transient = 0.1
+    loaded_again = PersonProfile.from_dict(migrated.to_dict())
+    assert loaded_again.warmth_transient == 0.1
+
+
 def test_person_profile_kv_key_rejects_empty_platform_or_sender():
     assert person_profile_kv_key("", "u1") == ""
     assert person_profile_kv_key("qq", "") == ""

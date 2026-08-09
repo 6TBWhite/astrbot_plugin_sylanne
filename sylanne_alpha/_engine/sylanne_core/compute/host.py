@@ -127,7 +127,7 @@ class SylanneAlphaHost:
             SylanneAlphaHostEvent(
                 text=reply_text,
                 confidence=0.7,
-                flags=["chat_response", "safe"],
+                flags=["chat_response"],
                 now=response_event.now,
                 values=dict(response_event.values),
                 event_time=dict(response_event.event_time),
@@ -179,6 +179,7 @@ class SylanneAlphaHost:
         """内部 tick 实现：转换事件 → 注入 phase flag → 驱动 kernel → CoW snapshot → 按需持久化。"""
         host_event = self._event(event)
         flags = list(dict.fromkeys([phase, *host_event.flags]))
+        origin = "agent" if phase == "response" else "system" if phase == "proactive" else "user"
         surface: dict[str, Any] = self.kernel.tick(
             AlphaKernelEvent(
                 text=host_event.text,
@@ -187,6 +188,8 @@ class SylanneAlphaHost:
                 flags=flags,
                 now=host_event.now,
                 event_time=dict(host_event.event_time),
+                origin=origin,
+                phase=phase,
             ),
             assessment=assessment,
         )["surface"]

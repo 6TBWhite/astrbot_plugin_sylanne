@@ -614,6 +614,7 @@ class StatePersistence:
         # 始终包含 schema_version 和 session_key
         result: dict[str, Any] = {
             "schema_version": snapshot.get("schema_version"),
+            "affect_semantics_version": snapshot.get("affect_semantics_version"),
             "session_key": snapshot.get("session_key"),
             "_dirty_subsystems": list(dirty_set),
         }

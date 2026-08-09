@@ -1237,15 +1237,14 @@ class PublicAPI:
     ) -> dict[str, Any]:
         """观测用户请求：驱动计算栈更新，触发反馈循环。
 
-        反馈循环逻辑：
-          - 距上次 bot 表达 < 30s → feedback("accepted")
-          - 距上次 bot 表达 > 300s → feedback("ignored")
+        反馈循环只保留有明确时间语义的忽略信号：距上次 bot 表达 > 300s
+        才触发 feedback("ignored")。短时间继续发言不代表接受上一条回复。
 
         Args:
             session_key: 会话标识。
             text: 用户消息文本。
             confidence: 置信度。
-            flags: 标志列表（如 ["safe"]）。
+            flags: 显式语义标志列表；普通消息无需标志。
             now: 事件时间戳。
 
         Returns:
@@ -1267,10 +1266,7 @@ class PublicAPI:
         last_expr_time = p._store.last_bot_expression_time.get(session_key, 0.0)
         if last_expr_time > 0:
             gap = effective_now - last_expr_time
-            if gap < 30.0:
-                dt = max(0.1, min(10.0, gap / 60.0))
-                host.kernel.computation.feedback("accepted", dt=dt)
-            elif gap > 300.0:
+            if gap > 300.0:
                 dt = max(0.1, min(10.0, gap / 60.0))
                 host.kernel.computation.feedback("ignored", dt=dt)
         result = host.on_request(event)
@@ -1333,7 +1329,7 @@ class PublicAPI:
             session_key,
             text=text,
             confidence=confidence,
-            flags=["safe"],
+            flags=[],
             now=effective_now,
         )
         # Legacy compat: command_surface removed; return empty dict
@@ -1891,7 +1887,7 @@ class PublicAPI:
         event = SylanneAlphaHostEvent(
             text="",
             confidence=0.5,
-            flags=["proactive", "safe"],
+            flags=["proactive"],
             now=now or time.time(),
             event_time=p._event_time(now),
         )

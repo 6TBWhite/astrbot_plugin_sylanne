@@ -1676,7 +1676,7 @@ class EmotionalStatePlugin(Star):
         event = SylanneAlphaHostEvent(
             text=text,
             confidence=0.7,
-            flags=["safe", "chat_request"],
+            flags=["chat_request"],
             now=now or time.time(),
             event_time=self._event_time(now),
         )

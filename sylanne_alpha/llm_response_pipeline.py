@@ -1609,7 +1609,7 @@ class LLMResponsePipeline:
                 session_key,
                 text=text[:500],
                 confidence=0.7,
-                flags=["safe"],
+                flags=[],
                 now=time.time(),
             )
         except Exception as e:

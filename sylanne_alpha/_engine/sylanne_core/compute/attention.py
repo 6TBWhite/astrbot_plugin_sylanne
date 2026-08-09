@@ -204,10 +204,10 @@ class TinyBodyAttention:
 
         add(
             "bloodflow.warmth",
-            0.045 * safe + 0.018 * has_text + 0.012 * confidence - 0.018 * hurt,
+            0.012 * repair - 0.018 * hurt,
         )
-        add("bloodflow.circulation", 0.03 * has_text + 0.016 * safe)
-        add("temperature.warmth", 0.04 * safe + 0.02 * repair - 0.035 * hurt)
+        add("bloodflow.circulation", 0.03 * has_text)
+        add("temperature.warmth", 0.02 * repair - 0.035 * hurt)
         add("temperature.volatility", 0.055 * boundary + 0.035 * hurt - 0.025 * safe)
         # 边界渗透性调制：permeability 高→伤害更容易穿透
         bp = 0.6 + self._boundary_permeability * 0.8  # [0.6, 1.4]
@@ -219,18 +219,18 @@ class TinyBodyAttention:
             0.035 * hurt + 0.02 * boundary + 0.01 * has_text - 0.018 * safe,
         )
         add("nerve.plasticity", 0.018 * has_text + 0.012 * repetition)
-        add("needs.need_contact", 0.06 * idle + 0.014 * has_text - 0.03 * safe)
+        add("needs.need_contact", 0.06 * idle + 0.014 * has_text)
         add("needs.need_quiet", 0.045 * boundary + 0.02 * hurt - 0.02 * safe)
         add("needs.need_repair", 0.07 * hurt + 0.035 * boundary - 0.045 * repair)
-        add("needs.need_expression", 0.04 * has_text + 0.02 * safe)
+        add("needs.need_expression", 0.04 * has_text)
         add(
             "muscle.readiness",
-            0.028 * has_text + 0.022 * idle + 0.018 * safe - 0.035 * hurt,
+            0.028 * has_text + 0.022 * idle - 0.035 * hurt,
         )
-        add("muscle.fatigue", 0.018 * idle + 0.012 * boundary - 0.02 * safe)
+        add("muscle.fatigue", 0.018 * idle + 0.012 * boundary)
         add("immunity.boundary_pressure", 0.065 * boundary + 0.025 * hurt - 0.028 * safe)
         add("immunity.cooldown", 0.025 * idle + 0.018 * boundary - 0.02 * safe)
-        add("immunity.interruption_budget", 0.012 * safe + 0.001 * idle)
+        add("immunity.interruption_budget", 0.001 * idle)
         add(
             "mortality.load",
             0.02 * boundary + 0.015 * hurt + 0.01 * idle - 0.014 * safe,

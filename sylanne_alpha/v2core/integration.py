@@ -49,7 +49,7 @@ from typing import Any
 logger = logging.getLogger("astrbot_plugin_sylanne")
 
 _DOMAIN_STATE_KEY_FMT = "sylanne_v2core_domains:{safe}"
-_DOMAIN_STATE_VERSION = 1
+_DOMAIN_STATE_VERSION = 2
 _PENDING_CTX_TTL = 180.0      # request 阶段暂存 ctx 的有效期（秒）
 _QUALITY_TTL_S = 600.0        # 对话质量分滞后反馈时效（秒）：超此视为陈旧/新话题，丢弃不注入
 _DISPATCH_MOD_TTL = 30.0      # T3-01 派发调制器时效（秒）：同轮 response 处理内消费，
@@ -113,10 +113,30 @@ async def _load_domains(plugin: Any, session_key: str, domains: dict[str, Any]) 
         return {}
     if not isinstance(blob, dict):
         return {}
+    try:
+        blob_version = int(blob.get("_version", 1))
+    except (TypeError, ValueError, OverflowError):
+        blob_version = 1
     for name, dom in domains.items():
         data = blob.get(name)
         if not isinstance(data, dict):
             continue
+        if blob_version < _DOMAIN_STATE_VERSION and name == "emotion":
+            # v1 的温度采样、快慢 EMA 与未表达积分都可能由无条件 safe 饱和。
+            # 显式换成空账本，使同一旧档重复载入也保持幂等。
+            try:
+                domains[name] = type(dom)()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Sylanne v2core 域 %r 迁移清理失败: %s", name, exc)
+            continue
+        if blob_version < _DOMAIN_STATE_VERSION and name == "usermodel":
+            # 旧 bond_ema 混入 synchrony/低预测误差/任意非空文本奖励；只清这两个
+            # 关系代理，用户画像、节律、共享梗与 sync 观测轨迹全部保留。
+            data = {
+                **data,
+                "bond_ema": 0.0,
+                "relationship_signal_weight": 0.0,
+            }
         try:
             loader = getattr(dom, "overlay_load_dict" if name == "memory" else "load_dict", None)
             if callable(loader):

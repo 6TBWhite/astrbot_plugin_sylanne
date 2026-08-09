@@ -31,7 +31,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .attention import focus_information_flood
-from .body import SCHEMA_VERSION, AlphaBodyState
+from .body import (
+    BLOODFLOW_WARMTH_BASELINE,
+    SCHEMA_VERSION,
+    TEMPERATURE_WARMTH_BASELINE,
+    AlphaBodyState,
+)
 from .hot_pool import HotPool
 from .personality import drift_sylanne_traits, initial_personality
 from .prompt_surface import (
@@ -57,6 +62,7 @@ SCHEMA_MORAL_REPAIR_VERSION = "sylanne.alpha.moral_repair.v1"
 SCHEMA_FALLIBILITY_VERSION = "sylanne.alpha.fallibility.v1"
 SCHEMA_GROUP_ATMOSPHERE_VERSION = "sylanne.alpha.group_atmosphere.v1"
 SCHEMA_PROACTIVE_SOURCE_VERSION = "sylanne.alpha.proactive_source.v1"
+AFFECT_SEMANTICS_VERSION = 2
 
 
 def _as_dict(val: Any) -> dict[str, Any]:
@@ -84,6 +90,8 @@ class AlphaKernelEvent:
     flags: list[str] = field(default_factory=list)
     now: float = 0.0
     event_time: dict[str, Any] = field(default_factory=dict)
+    origin: str = "user"
+    phase: str = "request"
 
 
 @dataclass(slots=True)
@@ -101,6 +109,7 @@ class AlphaKernel:
     """
 
     session_key: str
+    affect_semantics_version: int = AFFECT_SEMANTICS_VERSION
     body: AlphaBodyState = field(default_factory=AlphaBodyState)
     audit: dict[str, Any] = field(default_factory=dict)
     turns: int = 0
@@ -151,9 +160,14 @@ class AlphaKernel:
         pel_enabled: bool = False,
     ) -> AlphaKernel:
         """从持久化快照恢复 kernel，对每个字段做类型安全的反序列化。"""
+        body = AlphaBodyState.from_dict(_as_dict(snapshot.get("body")))
+        if _safe_int(snapshot.get("affect_semantics_version"), 0) < AFFECT_SEMANTICS_VERSION:
+            body.temperature.warmth = TEMPERATURE_WARMTH_BASELINE
+            body.bloodflow.warmth = BLOODFLOW_WARMTH_BASELINE
         kernel = cls(
             session_key=str(snapshot.get("session_key") or "default"),
-            body=AlphaBodyState.from_dict(_as_dict(snapshot.get("body"))),
+            affect_semantics_version=AFFECT_SEMANTICS_VERSION,
+            body=body,
             audit=_as_dict(snapshot.get("audit")),
             turns=_safe_int(snapshot.get("turns")),
             last_event=_as_dict(snapshot.get("last_event")),
@@ -231,12 +245,28 @@ class AlphaKernel:
         # downstream consumers treat a malformed container as "no assessment".
         if assessment is not None and not isinstance(assessment, dict):
             assessment = None
+        response_flags = {"response", "chat_response"}
+        if event.phase == "response" or response_flags.intersection(event.flags):
+            event.phase = "response"
+            event.origin = "agent"
+        elif event.phase == "proactive" or "proactive" in event.flags:
+            event.phase = "proactive"
+            event.origin = "system"
+        else:
+            event.phase = "request"
+            event.origin = "user"
+
+        if event.origin == "agent":
+            self.body.settle_response(text=event.text, now=event.now)
+            return self._finish_tick(event, assessment=None)
+
         self.body.apply(
             text=event.text,
             flags=event.flags,
             confidence=event.confidence,
             now=event.now,
         )
+        self.body.apply_assessment(assessment, event_confidence=event.confidence)
         personality = self._personality()
         if personality:
             self.computation.apply_personality(personality.get("traits", personality))
@@ -272,6 +302,15 @@ class AlphaKernel:
         if collapse_record is not None:
             self._apply_collapse(collapse_record)
         self._evolve_alpha_layers(event)
+        return self._finish_tick(event, assessment=assessment)
+
+    def _finish_tick(
+        self,
+        event: AlphaKernelEvent,
+        *,
+        assessment: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """统一记录事件来源并生成 surface；response 不再重跑刺激计算。"""
         self.turns += 1
         previous = dict(self.last_event)
         self.previous_event = previous
@@ -282,7 +321,23 @@ class AlphaKernel:
             "now": event.now,
             "event_time": dict(event.event_time),
             "values": dict(event.values),
+            "origin": event.origin,
+            "phase": event.phase,
         }
+        audit_events = self.audit.get("events")
+        if not isinstance(audit_events, list):
+            audit_events = []
+        audit_events.append(
+            {
+                "turn": self.turns,
+                "origin": event.origin,
+                "phase": event.phase,
+                "flags": list(event.flags),
+                "now": event.now,
+            }
+        )
+        self.audit["affect_semantics_version"] = AFFECT_SEMANTICS_VERSION
+        self.audit["events"] = audit_events[-64:]
         self.relational_time = self._relational_time_layer(
             current=self.last_event, previous=previous
         )
@@ -335,6 +390,7 @@ class AlphaKernel:
         """导出可持久化的完整内部状态（供 AlphaRuntime 序列化到磁盘）。"""
         return {
             "schema_version": SCHEMA_VERSION,
+            "affect_semantics_version": AFFECT_SEMANTICS_VERSION,
             "session_key": self.session_key,
             "turns": self.turns,
             "body": self.body.to_dict(),
@@ -1153,4 +1209,6 @@ class AlphaKernel:
             flags=list(payload.get("flags") or []),
             now=now,
             event_time=_as_dict(payload.get("event_time")),
+            origin=str(payload.get("origin") or "user"),
+            phase=str(payload.get("phase") or "request"),
         )

@@ -49,6 +49,7 @@ _SIX_TRAIT_KEYS = frozenset(
 )
 
 _KV_KEY_TEMPLATE = "sylanne_person_profile:{platform}:{sender_id}"
+PERSON_PROFILE_SCHEMA_VERSION = 2
 
 # warmth/volatility transient 的存储帽（design §4.3："|transient| 存储帽 ±0.3"）。
 # 每一处"产出新 transient 值"的代码（载入 / EMA 混合 / 衰减）都要重新钳，不能只在
@@ -60,7 +61,7 @@ _TRANSIENT_STORAGE_CAP = 0.3
 _APPLY_CAP = 0.15
 
 # 衰减半衰期（design §4.2，量级是拍的，未经行为标定，shadow 期再定死）。
-WARMTH_HALF_LIFE_SECONDS = 4 * 3600.0
+WARMTH_HALF_LIFE_SECONDS = 30 * 60.0
 VOLATILITY_HALF_LIFE_SECONDS = 90 * 60.0
 
 # |transient| < eps 视为归零（design §4.2）。
@@ -152,7 +153,7 @@ class PersonProfile:
     last_applied_transient: float = 0.0
     last_applied_volatility_transient: float = 0.0
 
-    schema_ver: int = 1
+    schema_ver: int = PERSON_PROFILE_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         self.preference_count = _finite_nonneg_int(self.preference_count, 0)
@@ -196,7 +197,7 @@ class PersonProfile:
         try:
             self.schema_ver = int(self.schema_ver)
         except (TypeError, ValueError):
-            self.schema_ver = 1
+            self.schema_ver = PERSON_PROFILE_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -223,6 +224,11 @@ class PersonProfile:
         """FIELD_BACKFILL_DOCTRINE：一律 `d.get(key, default)`；数值/枚举归一统一在
         `__post_init__` 做（原样传入，避免 to_dict/from_dict/直接构造三条路径各自为政）。
         """
+        try:
+            stored_version = int(d.get("schema_ver", 1))
+        except (TypeError, ValueError, OverflowError):
+            stored_version = 1
+        legacy_affect = stored_version < PERSON_PROFILE_SCHEMA_VERSION
         return cls(
             preference_count=d.get("preference_count", 0),
             boundary_count=d.get("boundary_count", 0),
@@ -230,16 +236,18 @@ class PersonProfile:
             repair_count=d.get("repair_count", 0),
             phase=d.get("phase", "low_signal"),
             six_snapshot=d.get("six_snapshot", {}),
-            warmth_baseline=d.get("warmth_baseline", 0.45),
-            warmth_transient=d.get("warmth_transient", 0.0),
+            warmth_baseline=0.45 if legacy_affect else d.get("warmth_baseline", 0.45),
+            warmth_transient=0.0 if legacy_affect else d.get("warmth_transient", 0.0),
             volatility_transient=d.get("volatility_transient", 0.0),
             valence=d.get("valence", 0.0),
             arousal=d.get("arousal", 0.0),
             tension=d.get("tension", 0.0),
             last_interaction_ts=d.get("last_interaction_ts", None),
-            last_applied_transient=d.get("last_applied_transient", 0.0),
+            last_applied_transient=(
+                0.0 if legacy_affect else d.get("last_applied_transient", 0.0)
+            ),
             last_applied_volatility_transient=d.get("last_applied_volatility_transient", 0.0),
-            schema_ver=d.get("schema_ver", 1),
+            schema_ver=PERSON_PROFILE_SCHEMA_VERSION,
         )
 
 

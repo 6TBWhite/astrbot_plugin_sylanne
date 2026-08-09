@@ -32,6 +32,27 @@ from .vector import clamp as _clamp
 
 SCHEMA_VERSION = "sylanne.alpha.body.v1"
 RELATIONSHIP_MEMORY_SCHEMA_VERSION = "sylanne.alpha.relationship_memory.v1"
+TEMPERATURE_WARMTH_BASELINE = 0.45
+BLOODFLOW_WARMTH_BASELINE = 0.40
+WARMTH_HALF_LIFE_SECONDS = 30.0 * 60.0
+
+
+def _finite_float(value: Any, default: float = 0.0) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return result if math.isfinite(result) else default
+
+
+def _assessment_float(assessment: dict[str, Any], key: str) -> float | None:
+    if key not in assessment:
+        return None
+    try:
+        result = float(assessment[key])
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return result if math.isfinite(result) else None
 
 
 @dataclass(slots=True)
@@ -64,7 +85,7 @@ class AlphaBloodflowState:
     """血流子系统状态。
 
     模拟情感温度和信息循环。
-    - warmth: 关系温暖感 [0,1]，safe 事件升高，hurt 降低
+    - warmth: 当前情感血流温度 [0,1]，由语义评价驱动并随时间回归基线
     - circulation: 循环活力 [0,1]，有文本交互时升高
     - memory_flow: 信息流动强度 [0,1]，随可塑性增长
     """
@@ -133,7 +154,7 @@ class AlphaTemperatureState:
     """温度子系统状态。
 
     模拟情感温度和修复热量。
-    - warmth: 情感温暖 [0,1]，safe 升高，hurt 降低
+    - warmth: 当前情感温暖 [0,1]，由语义评价驱动并随时间回归基线
     - volatility: 波动性 [0,1]，boundary 事件升高
     - repair_heat: 修复热 [0,1]，repair 事件升高
     """
@@ -431,7 +452,9 @@ class AlphaBodyState:
         self.pulse.beat = max(0.0, self.pulse.beat + delta.get("pulse.beat", 0.0))
         self.pulse.rhythm = _clamp(self.pulse.rhythm + delta.get("pulse.rhythm", 0.0))
         self.pulse.strain = _clamp(self.pulse.strain + delta.get("pulse.strain", 0.0))
-        self.pulse.last_tick = now or self.pulse.last_tick + 1.0
+        self.pulse.last_tick = (
+            max(self.pulse.last_tick, now) if now else self.pulse.last_tick + 1.0
+        )
         self.needs["need_contact"] = _clamp(
             self.needs["need_contact"] + delta.get("needs.need_contact", 0.0)
         )
@@ -604,6 +627,82 @@ class AlphaBodyState:
             "memory": memory_payload,
         }
 
+    def _decay_warmth(self, elapsed: float) -> None:
+        """在当前事件落地前，把即时温度按墙钟时间指数回归到中性基线。"""
+        seconds = _finite_float(elapsed, 0.0)
+        if seconds <= 0.0:
+            return
+        try:
+            factor = 2.0 ** (-seconds / WARMTH_HALF_LIFE_SECONDS)
+        except OverflowError:
+            factor = 0.0
+        if not math.isfinite(factor):
+            return
+        self.temperature.warmth = _clamp(
+            TEMPERATURE_WARMTH_BASELINE
+            + (self.temperature.warmth - TEMPERATURE_WARMTH_BASELINE) * factor
+        )
+        self.bloodflow.warmth = _clamp(
+            BLOODFLOW_WARMTH_BASELINE
+            + (self.bloodflow.warmth - BLOODFLOW_WARMTH_BASELINE) * factor
+        )
+
+    def apply_assessment(
+        self,
+        assessment: dict[str, Any] | None,
+        *,
+        event_confidence: float = 0.0,
+    ) -> None:
+        """把用户消息的语义评价小幅投影到即时温度，不生成关系证据。"""
+        if not isinstance(assessment, dict):
+            return
+        raw_values = tuple(
+            _assessment_float(assessment, key)
+            for key in ("valence", "arousal", "wound_risk")
+        )
+        if any(value is None for value in raw_values):
+            return
+        raw_valence, raw_arousal, raw_wound_risk = raw_values
+        assert raw_valence is not None and raw_arousal is not None and raw_wound_risk is not None
+        valence = max(-1.0, min(1.0, raw_valence))
+        wound_risk = _clamp(raw_wound_risk)
+        arousal = _clamp(raw_arousal)
+        raw_confidence = assessment.get("confidence", event_confidence)
+        confidence = _clamp(_finite_float(raw_confidence, 0.5))
+        gain = 0.4 + 0.6 * confidence
+
+        temperature_delta = max(-0.06, min(0.02, valence * 0.02 * gain - wound_risk * 0.04))
+        bloodflow_delta = max(-0.06, min(0.03, valence * 0.03 * gain - wound_risk * 0.03))
+        self.temperature.warmth = _clamp(self.temperature.warmth + temperature_delta)
+        self.bloodflow.warmth = _clamp(self.bloodflow.warmth + bloodflow_delta)
+        self.temperature.volatility = _clamp(
+            self.temperature.volatility + arousal * 0.02 * gain
+        )
+        self.muscle.readiness = _clamp(self.muscle.readiness + arousal * 0.015 * gain)
+
+    def settle_response(
+        self,
+        *,
+        text: str = "",
+        now: float = 0.0,
+    ) -> None:
+        """结算 Agent 已完成的表达，不把自己的输出当作外部刺激。"""
+        effective_now = _finite_float(now, 0.0)
+        elapsed = (
+            max(0.0, effective_now - self.pulse.last_tick)
+            if effective_now and self.pulse.last_tick
+            else 0.0
+        )
+        self._decay_warmth(elapsed)
+        self.needs["need_expression"] = _clamp(self.needs["need_expression"] - 0.12)
+        if text.strip():
+            self.muscle.fatigue = _clamp(self.muscle.fatigue + 0.02)
+        self.muscle.readiness = _clamp(
+            0.2 + self.muscle.trained_reach + self.needs["need_expression"] - self.muscle.fatigue
+        )
+        if effective_now:
+            self.pulse.last_tick = max(self.pulse.last_tick, effective_now)
+
     def _passive_decay(self, elapsed: float) -> None:
         """基于真实时间流逝的被动衰减/恢复。
 
@@ -649,6 +748,8 @@ class AlphaBodyState:
         text = text.strip()
         elapsed = max(0.0, now - self.pulse.last_tick) if now else 1.0
         repetition = list(self._recent_texts).count(text) + 1 if text else 0
+
+        self._decay_warmth(elapsed)
 
         event = self.event_vector(
             text=text,

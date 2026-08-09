@@ -51,3 +51,12 @@ def test_tension_repair_from_real_body() -> None:
     snap = snapshot_from_surface(_surface(0.5, strain=0.7, need_repair=0.6), "s")
     assert snap.tension >= 0.6
     assert snap.repair_pressure >= 0.5
+
+
+def test_relationship_signal_weight_projects_from_integrated_self() -> None:
+    surface = _surface(0.5)
+    surface["host_payload"] = {
+        "integrated_self": {"state_index": {"relationship_signal_weight": 0.375}}
+    }
+    snap = snapshot_from_surface(surface, "s")
+    assert snap.relationship_signal_weight == 0.375

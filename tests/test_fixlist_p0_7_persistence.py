@@ -134,6 +134,64 @@ def test_load_tolerates_missing_key() -> None:
     asyncio.run(go())
 
 
+def test_v1_domain_sidecar_migration_clears_affect_and_false_bond_only() -> None:
+    root = tempfile.mkdtemp(prefix="p07v2_")
+    p = _KVPlugin(root)
+    key = ig._DOMAIN_STATE_KEY_FMT.format(safe=ig._safe_session_key("sess:persist"))
+    p._kv[key] = {
+        "_version": 1,
+        "emotion": {
+            "samples": [0.8, 1.0],
+            "fast_ema": 0.9,
+            "slow_ema": 0.7,
+            "unexpressed": 4.2,
+            "unexpressed_since": 3,
+        },
+        "usermodel": {
+            "disposition": {
+                "warmth": 0.4,
+                "engagement": 0.5,
+                "defensiveness": 0.1,
+                "distress": 0.2,
+            },
+            "rhythm_ema": 15.0,
+            "bond_ema": 0.88,
+            "sync_trace": [
+                {"turn": 2.0, "sync": 0.9, "grip": 0.8, "user_pe": 0.1}
+            ],
+            "memes": {
+                "芝士雪豹": {"count": 4.0, "first_arousal": 0.8, "last_turn": 2.0}
+            },
+        },
+    }
+
+    async def migrate() -> dict:
+        rt = ig._runtime_for(p, "sess:persist")
+        await ig._load_domains(p, "sess:persist", rt["domains"])
+        # 重复加载同一旧档模拟迁移中断后重试；结果必须稳定。
+        await ig._load_domains(p, "sess:persist", rt["domains"])
+        await ig._save_domains(p, "sess:persist", rt["domains"])
+        return rt["domains"]
+
+    domains = asyncio.run(migrate())
+    emotion = domains["emotion"].to_dict()
+    usermodel = domains["usermodel"].to_dict()
+    assert emotion == {
+        "samples": [],
+        "fast_ema": None,
+        "slow_ema": None,
+        "unexpressed": 0.0,
+        "unexpressed_since": None,
+    }
+    assert usermodel["bond_ema"] == 0.0
+    assert usermodel["relationship_signal_weight"] == 0.0
+    assert usermodel["disposition"]["warmth"] == 0.4
+    assert usermodel["rhythm_ema"] == 15.0
+    assert usermodel["sync_trace"][0]["sync"] == 0.9
+    assert "芝士雪豹" in usermodel["memes"]
+    assert p._kv[key]["_version"] == 2
+
+
 def test_save_persists_without_background_tasks_attr() -> None:
     """skeptic P0-7：plugin 无 _background_tasks 时，落盘任务仍被模块级锚定，不被 GC 丢。
 
